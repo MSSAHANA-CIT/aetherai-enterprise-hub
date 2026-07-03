@@ -27,9 +27,11 @@ from app.schemas.otp import (
     VerifySignupOtpRequest,
 )
 from app.services.gmail_service import (
+    GMAIL_NOT_CONFIGURED_MESSAGE,
     exchange_code_for_tokens,
     get_authorization_url,
     get_sender_email_from_credentials,
+    is_gmail_configured,
     save_refresh_token_locally,
 )
 from app.services.otp_service import (
@@ -58,12 +60,17 @@ FORGOT_PASSWORD_MESSAGE = (
 RESEND_OTP_MESSAGE = "If an account exists, a verification code has been sent."
 
 
-def _map_signup_role(role: str) -> str:
+GMAIL_OTP_FAILURE_MESSAGE = (
+    "Email verification service failed. Check Gmail API configuration."
+)
+
+
+def _map_signup_role(role: str) -> tuple[str, bool]:
     if role == "manager":
-        return ROLE_MANAGER
+        return ROLE_MANAGER, False
     if role == "admin_request":
-        return ROLE_ADMIN_REQUEST
-    return ROLE_EMPLOYEE
+        return ROLE_ADMIN_REQUEST, True
+    return ROLE_EMPLOYEE, False
 
 
 def _client_ip(request: Request) -> Optional[str]:
@@ -91,14 +98,62 @@ def _ensure_gmail_oauth_configured() -> None:
         )
 
 
-def _send_otp_or_raise(db: Session, *, user: User, purpose: str) -> None:
-    try:
-        create_and_send_otp(db, user_id=user.id, email=user.email, purpose=purpose)
-    except Exception as exc:
-        logger.exception("Failed to send OTP email for purpose=%s", purpose)
+def _log_auth_failure(
+    endpoint: str,
+    error_type: str,
+    email: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> None:
+    logger.warning(
+        "Auth failure endpoint=%s email=%s error_class=%s error_message=%s",
+        endpoint,
+        email or "unknown",
+        error_type,
+        error_message or error_type,
+    )
+
+
+def _send_otp_or_raise(
+    db: Session, *, user: User, purpose: str, endpoint: str = "unknown"
+) -> None:
+    if not is_gmail_configured():
+        _log_auth_failure(
+            endpoint,
+            "GmailNotConfigured",
+            user.email,
+            GMAIL_NOT_CONFIGURED_MESSAGE,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Unable to send verification code. Check Gmail API configuration.",
+            detail=GMAIL_NOT_CONFIGURED_MESSAGE,
+        )
+
+    try:
+        create_and_send_otp(db, user_id=user.id, email=user.email, purpose=purpose)
+    except RuntimeError as exc:
+        error_message = str(exc)
+        _log_auth_failure(endpoint, type(exc).__name__, user.email, error_message)
+        if GMAIL_NOT_CONFIGURED_MESSAGE in error_message:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=GMAIL_NOT_CONFIGURED_MESSAGE,
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=GMAIL_OTP_FAILURE_MESSAGE,
+        ) from exc
+    except Exception as exc:
+        error_message = str(exc) or type(exc).__name__
+        _log_auth_failure(endpoint, type(exc).__name__, user.email, error_message)
+        logger.exception(
+            "Failed to send OTP email endpoint=%s purpose=%s email=%s",
+            endpoint,
+            purpose,
+            user.email,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=GMAIL_OTP_FAILURE_MESSAGE,
         ) from exc
 
 
@@ -157,35 +212,60 @@ def google_callback(code: Optional[str] = None, error: Optional[str] = None) -> 
 
 @router.post("/register", response_model=OtpRequiredResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> OtpRequiredResponse:
+    email = payload.email.lower()
+
     if payload.role == "super_admin":
+        _log_auth_failure("register", "SuperAdminSelfCreate", email)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Super admin accounts cannot be self-created.",
         )
 
-    existing_user = db.query(User).filter(User.email == payload.email.lower()).first()
+    if not is_gmail_configured():
+        _log_auth_failure("register", "GmailNotConfigured", email)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=GMAIL_NOT_CONFIGURED_MESSAGE,
+        )
+
+    existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:
+        _log_auth_failure("register", "EmailAlreadyRegistered", email)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
         )
 
-    user = User(
-        full_name=payload.full_name.strip(),
-        email=payload.email.lower(),
-        company_name=payload.company_name.strip(),
-        hashed_password=hash_password(payload.password),
-        role=_map_signup_role(payload.role),
-        is_active=False,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        mapped_role, admin_requested = _map_signup_role(payload.role)
+        user = User(
+            full_name=payload.full_name.strip(),
+            email=email,
+            company_name=payload.company_name.strip(),
+            hashed_password=hash_password(payload.password),
+            role=mapped_role,
+            admin_requested=admin_requested,
+            is_active=False,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
-    _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_SIGNUP)
+        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_SIGNUP, endpoint="register")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        error_message = str(exc) or type(exc).__name__
+        _log_auth_failure("register", type(exc).__name__, email, error_message)
+        logger.exception("Register failed for email=%s", email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration failed: {type(exc).__name__}",
+        ) from exc
 
     return OtpRequiredResponse(
-        message="Verification code sent to your work email. Please verify to activate your account.",
+        message="Verification code sent to your work email.",
         data=OtpRequiredData(
             email=user.email,
             expires_in_minutes=settings.otp_expire_minutes,
@@ -249,44 +329,66 @@ def resend_signup_otp(payload: OtpEmailRequest, db: Session = Depends(get_db)) -
     user = db.query(User).filter(User.email == email).first()
 
     if user is not None and not user.is_active:
-        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_SIGNUP)
+        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_SIGNUP, endpoint="resend-signup-otp")
 
     return MessageResponse(message=RESEND_OTP_MESSAGE)
 
 
 @router.post("/login", response_model=OtpRequiredResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> OtpRequiredResponse:
-    user = db.query(User).filter(User.email == payload.email.lower()).first()
+    email = payload.email.lower()
+
+    if not is_gmail_configured():
+        _log_auth_failure("login", "GmailNotConfigured", email)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=GMAIL_NOT_CONFIGURED_MESSAGE,
+        )
+
+    user = db.query(User).filter(User.email == email).first()
     if user is None or not verify_password(payload.password, user.hashed_password):
+        _log_auth_failure("login", "InvalidCredentials", email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not user.is_active:
-        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_SIGNUP)
-        return OtpRequiredResponse(
-            message="Account pending verification. A new code has been sent to your email.",
-            data=OtpRequiredData(
-                email=user.email,
-                expires_in_minutes=settings.otp_expire_minutes,
-                purpose="signup",
-            ),
+    try:
+        if not user.is_active:
+            _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_SIGNUP, endpoint="login")
+            return OtpRequiredResponse(
+                message="Verification code sent to your work email.",
+                data=OtpRequiredData(
+                    email=user.email,
+                    expires_in_minutes=settings.otp_expire_minutes,
+                    purpose="signup",
+                ),
+            )
+
+        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_LOGIN, endpoint="login")
+
+        log_action(
+            db,
+            actor_id=user.id,
+            action="login_otp_sent",
+            entity_type="user",
+            entity_id=user.id,
+            metadata={"email": user.email},
+            ip_address=_client_ip(request),
         )
-
-    _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_LOGIN)
-
-    log_action(
-        db,
-        actor_id=user.id,
-        action="login_otp_sent",
-        entity_type="user",
-        entity_id=user.id,
-        metadata={"email": user.email},
-        ip_address=_client_ip(request),
-    )
-    db.commit()
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        error_message = str(exc) or type(exc).__name__
+        _log_auth_failure("login", type(exc).__name__, email, error_message)
+        logger.exception("Login OTP send failed for email=%s", email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login failed: {type(exc).__name__}",
+        ) from exc
 
     return OtpRequiredResponse(
         message="Verification code sent to your work email.",
@@ -344,7 +446,7 @@ def resend_login_otp(payload: OtpEmailRequest, db: Session = Depends(get_db)) ->
     user = db.query(User).filter(User.email == email).first()
 
     if user is not None and user.is_active:
-        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_LOGIN)
+        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_LOGIN, endpoint="resend-login-otp")
 
     return MessageResponse(message=RESEND_OTP_MESSAGE)
 
@@ -355,7 +457,7 @@ def forgot_password(payload: OtpEmailRequest, db: Session = Depends(get_db)) -> 
     user = db.query(User).filter(User.email == email).first()
 
     if user is not None and user.is_active:
-        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_PASSWORD_RESET)
+        _send_otp_or_raise(db, user=user, purpose=OTP_PURPOSE_PASSWORD_RESET, endpoint="forgot-password")
 
     return MessageResponse(message=FORGOT_PASSWORD_MESSAGE)
 

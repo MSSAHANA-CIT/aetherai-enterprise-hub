@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 GOOGLE_REFRESH_TOKEN_FILE = BACKEND_ROOT / ".google_refresh_token"
+GMAIL_NOT_CONFIGURED_MESSAGE = (
+    "Email service is not configured. Please check Gmail API environment variables."
+)
 
 
 def _get_client_config() -> dict:
@@ -105,10 +108,10 @@ def _resolve_refresh_token() -> str:
 def get_gmail_credentials() -> Credentials:
     refresh_token = _resolve_refresh_token()
     if not refresh_token:
-        raise RuntimeError(
-            "GOOGLE_REFRESH_TOKEN is not configured. "
-            "Visit /api/auth/google/connect to authorize Gmail sending."
-        )
+        raise RuntimeError(GMAIL_NOT_CONFIGURED_MESSAGE)
+
+    if not settings.google_client_id or not settings.google_client_secret:
+        raise RuntimeError(GMAIL_NOT_CONFIGURED_MESSAGE)
 
     credentials = Credentials(
         token=None,
@@ -127,7 +130,7 @@ def get_gmail_credentials() -> Credentials:
 
 def send_email(*, to: str, subject: str, html_body: str, text_body: str) -> None:
     if not settings.gmail_sender_email:
-        raise RuntimeError("GMAIL_SENDER_EMAIL is not configured.")
+        raise RuntimeError(GMAIL_NOT_CONFIGURED_MESSAGE)
 
     credentials = get_gmail_credentials()
     service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
@@ -143,14 +146,32 @@ def send_email(*, to: str, subject: str, html_body: str, text_body: str) -> None
     service.users().messages().send(userId="me", body={"raw": raw_message}).execute()
 
 
+def client_id_present() -> bool:
+    return bool(settings.google_client_id.strip())
+
+
+def client_secret_present() -> bool:
+    return bool(settings.google_client_secret.strip())
+
+
+def sender_email_present() -> bool:
+    return bool(settings.gmail_sender_email.strip())
+
+
 def is_gmail_configured() -> bool:
     return bool(
         settings.google_client_id
         and settings.google_client_secret
-        and settings.gmail_sender_email
-        and _resolve_refresh_token()
+        and sender_email_present()
+        and refresh_token_present()
     )
 
 
 def refresh_token_present() -> bool:
     return bool(_resolve_refresh_token())
+
+
+def ensure_gmail_configured() -> None:
+    if is_gmail_configured():
+        return
+    raise RuntimeError(GMAIL_NOT_CONFIGURED_MESSAGE)

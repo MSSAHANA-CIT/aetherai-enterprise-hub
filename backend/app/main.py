@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -6,8 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 
 from app.api.routes import ai, analytics, audit_logs, auth, chat, documents, exports, health, meetings, notifications, presence, summaries, tasks, users, websocket_chat, websocket_presence
-from app.core.config import settings
+from app.core.config import get_database_type, settings
 from app.database import Base, engine
+
+logger = logging.getLogger(__name__)
 from app.models import AuditLog, CompanyDocument, DmParticipant, LoginOTP, MeetingRecording, MeetingSummary, MessageReaction, Notification, OtpToken, Task  # noqa: F401 — register model metadata
 
 
@@ -16,12 +19,23 @@ def _run_schema_migrations() -> None:
     inspector = inspect(engine)
     if "users" in inspector.get_table_names():
         columns = {col["name"] for col in inspector.get_columns("users")}
-        if "last_seen_at" not in columns:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_at DATETIME"))
-        if "department" not in columns:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE users ADD COLUMN department VARCHAR(255)"))
+        is_postgres = str(engine.url).startswith("postgresql")
+        user_migrations: dict[str, tuple[str, str]] = {
+            "full_name": ("VARCHAR(255) NOT NULL DEFAULT ''", "VARCHAR(255) NOT NULL DEFAULT ''"),
+            "company_name": ("VARCHAR(255) NOT NULL DEFAULT ''", "VARCHAR(255) NOT NULL DEFAULT ''"),
+            "hashed_password": ("VARCHAR(255) NOT NULL DEFAULT ''", "VARCHAR(255) NOT NULL DEFAULT ''"),
+            "role": ("VARCHAR(50) NOT NULL DEFAULT 'employee'", "VARCHAR(50) NOT NULL DEFAULT 'employee'"),
+            "is_active": ("BOOLEAN NOT NULL DEFAULT 1", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            "admin_requested": ("BOOLEAN NOT NULL DEFAULT 0", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            "last_seen_at": ("DATETIME", "TIMESTAMP WITH TIME ZONE"),
+            "department": ("VARCHAR(255)", "VARCHAR(255)"),
+        }
+        for column_name, (sqlite_type, pg_type) in user_migrations.items():
+            if column_name not in columns:
+                column_type = pg_type if is_postgres else sqlite_type
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_type}"))
+                logger.info("Added missing users.%s column", column_name)
 
     if "meeting_recordings" in inspector.get_table_names():
         meeting_columns = {col["name"] for col in inspector.get_columns("meeting_recordings")}
@@ -53,6 +67,9 @@ def _run_schema_migrations() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    logger.info("Starting %s v%s", settings.app_name, settings.app_version)
+    logger.info("Environment: %s", settings.environment)
+    logger.info("Database type: %s", get_database_type(settings.database_url))
     Base.metadata.create_all(bind=engine)
     _run_schema_migrations()
     Path("uploads/meetings").mkdir(parents=True, exist_ok=True)

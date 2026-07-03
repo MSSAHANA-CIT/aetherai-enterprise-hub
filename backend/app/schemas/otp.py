@@ -59,5 +59,15 @@ class MessageResponse(BaseModel):
 
 class GmailHealthResponse(BaseModel):
     gmail_configured: bool
-    sender_email: str
+    client_id_present: bool
+    client_secret_present: bool
     refresh_token_present: bool
+    sender_email_present: bool
+
+
+class AuthHealthResponse(BaseModel):
+    status: str = "success"
+    users_table_ready: bool
+    login_otps_table_ready: bool
+    gmail_configured: bool
+    jwt_secret_configured: bool

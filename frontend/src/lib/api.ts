@@ -1,4 +1,17 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+
+const BACKEND_UNAVAILABLE_MESSAGE =
+  "Unable to connect to AetherAI servers. Please check backend deployment status and VITE_API_BASE_URL.";
+
+if (import.meta.env.DEV) {
+  console.log("[AetherAI API] Base URL:", API_BASE_URL);
+}
+
+function logApiDebug(url: string, status: number, message?: string) {
+  if (import.meta.env.DEV) {
+    console.log("[AetherAI API]", { url, status, message });
+  }
+}
 
 function resolveWsBaseUrl(): string {
   if (import.meta.env.VITE_WS_BASE_URL) {
@@ -539,34 +552,89 @@ export class ApiError extends Error {
   }
 }
 
-function parseErrorMessage(status: number, detail: unknown): string {
-  if (status === 400 && typeof detail === "string" && detail.toLowerCase().includes("already registered")) {
-    return "Email already registered";
-  }
-
-  if (status === 401 && typeof detail === "string") {
-    if (detail.toLowerCase().includes("verification code")) {
-      return detail;
-    }
-    return "Invalid email or password";
-  }
-
+function extractDetailMessage(detail: unknown): string | null {
   if (typeof detail === "string" && detail.trim()) {
-    return detail;
+    return detail.trim();
   }
 
   if (Array.isArray(detail) && detail.length > 0) {
-    const first = detail[0] as { msg?: string };
-    if (first?.msg) {
-      return first.msg;
+    const messages = detail
+      .map((item) => {
+        if (typeof item === "string") return item;
+        const entry = item as { msg?: string; message?: string };
+        const raw = entry.msg || entry.message || "";
+        return raw.replace(/^Value error,\s*/i, "");
+      })
+      .filter(Boolean);
+    if (messages.length > 0) {
+      return messages.join(". ");
     }
+  }
+
+  if (detail && typeof detail === "object") {
+    const record = detail as { message?: string; detail?: string };
+    if (record.message?.trim()) return record.message.trim();
+    if (record.detail?.trim()) return record.detail.trim();
+  }
+
+  return null;
+}
+
+function parseErrorMessage(
+  status: number,
+  detail: unknown,
+  fallbackMessage?: string,
+  rawBody?: unknown
+): string {
+  const detailMessage = extractDetailMessage(detail);
+  const bodyMessage =
+    rawBody &&
+    typeof rawBody === "object" &&
+    rawBody !== null &&
+    "message" in rawBody &&
+    typeof (rawBody as { message?: string }).message === "string"
+      ? (rawBody as { message: string }).message.trim()
+      : null;
+
+  if (status === 401 && detailMessage) {
+    if (detailMessage.toLowerCase().includes("verification code")) {
+      return detailMessage;
+    }
+    return detailMessage;
+  }
+
+  if (detailMessage) {
+    return detailMessage;
+  }
+
+  if (bodyMessage) {
+    return bodyMessage;
+  }
+
+  if (fallbackMessage?.trim()) {
+    return fallbackMessage;
   }
 
   return "Something went wrong. Please try again.";
 }
 
+function logRequestFailure(
+  url: string,
+  status: number | undefined,
+  responseBody: unknown,
+  errorMessage: string
+) {
+  console.error("[AetherAI API] Request failed:", {
+    url,
+    status,
+    response: responseBody,
+    error: errorMessage,
+  });
+}
+
 async function request<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   const headers = new Headers(options.headers);
+  const url = `${API_BASE_URL}${path}`;
 
   if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -579,32 +647,50 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   let response: Response;
 
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(url, {
       ...options,
       headers,
     });
-  } catch {
-    throw new ApiError("Server unavailable", 0);
+  } catch (error) {
+    const networkMessage = error instanceof Error ? error.message : String(error);
+    logRequestFailure(url, undefined, null, networkMessage);
+    throw new ApiError(BACKEND_UNAVAILABLE_MESSAGE, 0);
   }
 
   if (!response.ok) {
     let detail: unknown = null;
+    let fallbackMessage: string | undefined;
+    let rawBody: unknown = null;
 
     try {
-      const body = (await response.json()) as { detail?: unknown };
-      detail = body.detail;
+      rawBody = await response.json();
+      const body = rawBody as { detail?: unknown; message?: string };
+      detail = body.detail ?? body.message;
+      fallbackMessage = body.message;
     } catch {
       detail = null;
+      rawBody = null;
     }
 
-    throw new ApiError(parseErrorMessage(response.status, detail), response.status);
+    const message = parseErrorMessage(response.status, detail, fallbackMessage, rawBody);
+    logRequestFailure(url, response.status, rawBody ?? detail, message);
+    throw new ApiError(message, response.status);
   }
 
   if (response.status === 204) {
     return undefined as T;
   }
 
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  if (import.meta.env.DEV) {
+    const responseMessage =
+      typeof data === "object" && data !== null && "message" in data
+        ? String((data as { message?: string }).message ?? "")
+        : undefined;
+    logApiDebug(url, response.status, responseMessage);
+  }
+
+  return data;
 }
 
 async function requestBlob(path: string, options: RequestInit = {}, token?: string | null): Promise<Blob> {
@@ -709,7 +795,9 @@ export const api = {
   emailHealth() {
     return request<{
       gmail_configured: boolean;
-      sender_email: string;
+      client_id_present: boolean;
+      client_secret_present: boolean;
+      sender_email_present: boolean;
       refresh_token_present: boolean;
     }>("/api/health/email");
   },

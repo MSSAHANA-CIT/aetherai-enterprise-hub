@@ -60,9 +60,17 @@ export default function OTPVerification() {
   const routeState = (location.state as LocationState) ?? {};
   const storedSession = loadOtpSession();
 
-  const email = routeState.email ?? storedSession?.email ?? (isPreview ? "recruiter@company.com" : "");
+  const purposeParam = searchParams.get("purpose");
+  const emailParam = searchParams.get("email");
+
+  const email = emailParam ?? routeState.email ?? storedSession?.email ?? (isPreview ? "recruiter@company.com" : "");
   const expiresInMinutes = routeState.expiresInMinutes ?? storedSession?.expiresInMinutes ?? 10;
-  const purpose = routeState.purpose ?? storedSession?.purpose ?? "login";
+  const purpose: "login" | "signup" =
+    purposeParam === "signup" || purposeParam === "login"
+      ? purposeParam
+      : routeState.purpose === "signup" || storedSession?.purpose === "signup"
+        ? "signup"
+        : "login";
   const from = routeState.from?.pathname ?? storedSession?.from ?? "/dashboard";
   const totalSeconds = expiresInMinutes * 60;
 

@@ -213,6 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     } catch (error) {
       if (error instanceof ApiError) {
+        console.error("[AetherAI Auth] Login failed:", error.message);
         throw new Error(error.message);
       }
       throw error;
@@ -255,6 +256,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     } catch (error) {
       if (error instanceof ApiError) {
+        console.error("[AetherAI Auth] Register failed:", error.message);
         throw new Error(error.message);
       }
       throw error;

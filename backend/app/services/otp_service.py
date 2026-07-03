@@ -16,7 +16,7 @@ from app.services.email_template_service import (
     build_password_reset_otp_email,
     build_signup_otp_email,
 )
-from app.services.gmail_service import send_email
+from app.services.gmail_service import send_email, ensure_gmail_configured
 
 __all__ = [
     "OTP_PURPOSE_LOGIN",
@@ -75,6 +75,7 @@ def create_and_send_otp(db: Session, *, user_id: int, email: str, purpose: str) 
     else:
         subject, html_body, text_body = build_password_reset_otp_email(otp_code=otp_code)
 
+    ensure_gmail_configured()
     send_email(to=normalized_email, subject=subject, html_body=html_body, text_body=text_body)
 
 

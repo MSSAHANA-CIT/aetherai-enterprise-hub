@@ -65,7 +65,11 @@ export default function Register() {
     setIsSubmitting(true);
     try {
       const result = await register({ name, email, company, password, confirmPassword, role });
-      navigate("/verify-otp", {
+      const query = new URLSearchParams({
+        email: result.email,
+        purpose: "signup",
+      });
+      navigate(`/verify-otp?${query.toString()}`, {
         replace: true,
         state: {
           email: result.email,
@@ -75,9 +79,10 @@ export default function Register() {
         },
       });
     } catch (error) {
-      setErrors({
-        form: error instanceof Error ? error.message : "Unable to create workspace. Please try again.",
-      });
+      const message =
+        error instanceof Error ? error.message : "Unable to create workspace. Please try again.";
+      console.error("[AetherAI Auth] Register form error:", message);
+      setErrors({ form: message });
     } finally {
       setIsSubmitting(false);
     }

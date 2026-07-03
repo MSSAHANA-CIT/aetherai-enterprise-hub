@@ -52,7 +52,11 @@ export default function Login() {
     setIsSubmitting(true);
     try {
       const result = await requestLoginOtp(email, password);
-      navigate("/verify-otp", {
+      const query = new URLSearchParams({
+        email: result.email,
+        purpose: result.purpose,
+      });
+      navigate(`/verify-otp?${query.toString()}`, {
         replace: true,
         state: {
           email: result.email,
@@ -62,9 +66,10 @@ export default function Login() {
         },
       });
     } catch (error) {
-      setErrors({
-        form: error instanceof Error ? error.message : "Unable to sign in. Please try again.",
-      });
+      const message =
+        error instanceof Error ? error.message : "Unable to sign in. Please try again.";
+      console.error("[AetherAI Auth] Login form error:", message);
+      setErrors({ form: message });
     } finally {
       setIsSubmitting(false);
     }
