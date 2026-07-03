@@ -1,10 +1,25 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+function resolveApiBaseUrl(): string {
+  const fromEnv = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, "");
+  }
+  if (import.meta.env.DEV) {
+    return "http://localhost:8000";
+  }
+  return "";
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 const BACKEND_UNAVAILABLE_MESSAGE =
   "Unable to connect to AetherAI servers. Please check backend deployment status and VITE_API_BASE_URL.";
 
-if (import.meta.env.DEV) {
-  console.log("[AetherAI API] Base URL:", API_BASE_URL);
+console.log("[AetherAI API] Base URL:", API_BASE_URL || "(same-origin /api)");
+
+if (!import.meta.env.DEV && !import.meta.env.VITE_API_BASE_URL?.trim()) {
+  console.warn(
+    "[AetherAI API] VITE_API_BASE_URL is not set. Production builds must set it to your Railway backend URL."
+  );
 }
 
 function logApiDebug(url: string, status: number, message?: string) {
@@ -584,7 +599,9 @@ function parseErrorMessage(
   status: number,
   detail: unknown,
   fallbackMessage?: string,
-  rawBody?: unknown
+  rawBody?: unknown,
+  responseText?: string,
+  requestUrl?: string
 ): string {
   const detailMessage = extractDetailMessage(detail);
   const bodyMessage =
@@ -595,13 +612,6 @@ function parseErrorMessage(
     typeof (rawBody as { message?: string }).message === "string"
       ? (rawBody as { message: string }).message.trim()
       : null;
-
-  if (status === 401 && detailMessage) {
-    if (detailMessage.toLowerCase().includes("verification code")) {
-      return detailMessage;
-    }
-    return detailMessage;
-  }
 
   if (detailMessage) {
     return detailMessage;
@@ -615,7 +625,41 @@ function parseErrorMessage(
     return fallbackMessage;
   }
 
+  const textSnippet = responseText?.trim().slice(0, 240);
+  if (textSnippet && !textSnippet.startsWith("<!DOCTYPE") && !textSnippet.startsWith("<html")) {
+    return `Server error (HTTP ${status}): ${textSnippet}`;
+  }
+
+  if (status === 502 || status === 503) {
+    return `Backend unavailable (HTTP ${status}). Check Railway backend deployment and logs.`;
+  }
+
+  if (status === 404) {
+    return `API endpoint not found (HTTP 404). Set VITE_API_BASE_URL to your backend URL on Railway.`;
+  }
+
+  if (status >= 500) {
+    return `Server error (HTTP ${status}). Check backend logs on Railway.`;
+  }
+
+  if (requestUrl) {
+    return `Request failed (HTTP ${status}) at ${requestUrl}`;
+  }
+
   return "Something went wrong. Please try again.";
+}
+
+async function readResponseBody(response: Response): Promise<{ rawBody: unknown; text: string }> {
+  const text = await response.text();
+  if (!text.trim()) {
+    return { rawBody: null, text: "" };
+  }
+
+  try {
+    return { rawBody: JSON.parse(text) as unknown, text };
+  } catch {
+    return { rawBody: null, text };
+  }
 }
 
 function logRequestFailure(
@@ -658,22 +702,20 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   }
 
   if (!response.ok) {
-    let detail: unknown = null;
-    let fallbackMessage: string | undefined;
-    let rawBody: unknown = null;
+    const { rawBody, text } = await readResponseBody(response);
+    const body = rawBody as { detail?: unknown; message?: string } | null;
+    const detail = body?.detail ?? body?.message ?? null;
+    const fallbackMessage = body?.message;
 
-    try {
-      rawBody = await response.json();
-      const body = rawBody as { detail?: unknown; message?: string };
-      detail = body.detail ?? body.message;
-      fallbackMessage = body.message;
-    } catch {
-      detail = null;
-      rawBody = null;
-    }
-
-    const message = parseErrorMessage(response.status, detail, fallbackMessage, rawBody);
-    logRequestFailure(url, response.status, rawBody ?? detail, message);
+    const message = parseErrorMessage(
+      response.status,
+      detail,
+      fallbackMessage,
+      rawBody,
+      text,
+      url
+    );
+    logRequestFailure(url, response.status, rawBody ?? text, message);
     throw new ApiError(message, response.status);
   }
 
@@ -681,7 +723,14 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
     return undefined as T;
   }
 
-  const data = (await response.json()) as T;
+  const { rawBody: data, text } = await readResponseBody(response);
+  if (data === null) {
+    const message = text.trim()
+      ? `Invalid JSON response from server: ${text.slice(0, 120)}`
+      : `Empty response from server at ${url}`;
+    logRequestFailure(url, response.status, text, message);
+    throw new ApiError(message, response.status);
+  }
   if (import.meta.env.DEV) {
     const responseMessage =
       typeof data === "object" && data !== null && "message" in data
@@ -690,7 +739,7 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
     logApiDebug(url, response.status, responseMessage);
   }
 
-  return data;
+  return data as T;
 }
 
 async function requestBlob(path: string, options: RequestInit = {}, token?: string | null): Promise<Blob> {
