@@ -151,6 +151,107 @@
   }
 }
 
+/* Desktop-only gate — CSS animations (no JS dependency) */
+@keyframes gate-aurora-shift {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1) translate(0, 0);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.08) translate(2%, -1%);
+  }
+}
+
+@keyframes gate-orb-drift-a {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(36px, -28px);
+  }
+}
+
+@keyframes gate-orb-drift-b {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-44px, 32px);
+  }
+}
+
+@keyframes gate-orb-drift-c {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(20px, -18px);
+  }
+}
+
+@keyframes gate-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes gate-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.gate-aurora {
+  background:
+    radial-gradient(ellipse 90% 60% at 15% 10%, rgba(99, 102, 241, 0.28), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 85% 20%, rgba(139, 92, 246, 0.22), transparent 50%),
+    radial-gradient(ellipse 60% 45% at 50% 100%, rgba(59, 130, 246, 0.14), transparent 55%),
+    linear-gradient(160deg, #07070d 0%, #0c0a14 45%, #090912 100%);
+  animation: gate-aurora-shift 18s ease-in-out infinite;
+}
+
+.gate-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 20%, transparent 75%);
+}
+
+.gate-orb-a {
+  animation: gate-orb-drift-a 22s ease-in-out infinite;
+}
+
+.gate-orb-b {
+  animation: gate-orb-drift-b 28s ease-in-out infinite;
+}
+
+.gate-orb-c {
+  animation: gate-orb-drift-c 24s ease-in-out infinite;
+}
+
+.gate-card-enter {
+  animation: gate-card-enter 0.55s ease-out both;
+}
+
+.gate-float {
+  animation: gate-float 5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
