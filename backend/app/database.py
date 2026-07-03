@@ -11,12 +11,6 @@ if not _database_url:
         "DATABASE_URL is not configured. Set DATABASE_URL environment variable."
     )
 
-print("DATABASE_URL present:", bool(_database_url))
-print(
-    "Database driver: PostgreSQL"
-    if _database_url.startswith("postgresql")
-    else "SQLite"
-)
 print("Database host type:", get_database_host_type(_database_url))
 
 _is_sqlite = _database_url.startswith("sqlite")
