@@ -1,0 +1,163 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Design System CSS Variables */
+    --ds-color-primary: #6366f1;
+    --ds-color-background: #0a0a0f;
+    --ds-color-surface: #111118;
+    --ds-color-text-primary: #ffffff;
+    --ds-color-text-secondary: #9ca3af;
+    --ds-color-border: rgba(255, 255, 255, 0.08);
+    --ds-radius-md: 0.5rem;
+    --ds-shadow-soft: 0 2px 8px -2px rgba(0, 0, 0, 0.4);
+  }
+
+  * {
+    @apply border-surface-border;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    background-color: var(--ds-color-background);
+    color: var(--ds-color-text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::selection {
+    @apply bg-ds-primary/40 text-white;
+  }
+
+  /* Professional custom scrollbar — dark theme */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 9999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+@layer components {
+  /* Glassmorphism — single reusable styles */
+  .ds-glass {
+    @apply bg-ds-glass backdrop-blur-xl border border-ds-glass-border;
+  }
+
+  .ds-glass-medium {
+    @apply bg-ds-glass-medium backdrop-blur-xl border border-ds-glass-border;
+  }
+
+  .ds-glass-strong {
+    @apply bg-ds-glass-strong backdrop-blur-2xl border border-ds-glass-border-strong;
+  }
+
+  .ds-gradient-border {
+    position: relative;
+    background: linear-gradient(
+      135deg,
+      rgba(99, 102, 241, 0.15),
+      rgba(139, 92, 246, 0.05)
+    );
+  }
+
+  .ds-gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      135deg,
+      rgba(99, 102, 241, 0.5),
+      rgba(139, 92, 246, 0.2),
+      rgba(99, 102, 241, 0.1)
+    );
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .ds-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  }
+}
+
+@layer utilities {
+  /* Legacy utilities (backward compatible) */
+  .glass {
+    @apply ds-glass;
+  }
+
+  .glass-strong {
+    @apply ds-glass-strong;
+  }
+
+  .gradient-border {
+    @apply ds-gradient-border;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-white via-aether-200 to-aether-400;
+  }
+
+  .ds-text-gradient {
+    @apply bg-clip-text text-transparent bg-ds-gradient-ai;
+  }
+
+  .glow-orb {
+    @apply absolute rounded-full blur-3xl opacity-30 pointer-events-none;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

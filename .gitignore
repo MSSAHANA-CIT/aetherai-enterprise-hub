@@ -1,0 +1,26 @@
+# Environment files with secrets
+.env
+backend/.env
+backend/.google_refresh_token
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Database
+*.db
+
+# Uploaded documents
+backend/uploads/documents/*
+!backend/uploads/documents/.gitkeep
+backend/uploads/chat/*
+!backend/uploads/chat/.gitkeep
+
+# Node
+node_modules/
+dist/
+
+# OS
+.DS_Store
