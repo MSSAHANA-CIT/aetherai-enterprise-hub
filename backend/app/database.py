@@ -3,7 +3,7 @@ from collections.abc import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from app.core.config import settings
+from app.core.config import get_database_host_type, settings
 
 _database_url = (settings.database_url or "").strip()
 if not _database_url:
@@ -17,6 +17,7 @@ print(
     if _database_url.startswith("postgresql")
     else "SQLite"
 )
+print("Database host type:", get_database_host_type(_database_url))
 
 _is_sqlite = _database_url.startswith("sqlite")
 
